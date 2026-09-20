@@ -1,0 +1,290 @@
+package rv32_pkg;
+  localparam int XLEN = 32;
+  localparam int INSTR_WIDTH = 32;
+  typedef enum logic [1:0] {
+    TYPE_I,
+    TYPE_S,
+    TYPE_B,
+    TYPE_J
+  } imm_src_t;
+  typedef enum logic [2:0] {
+    ALU_ADD,
+    ALU_SUB,
+    ALU_SLT,
+    ALU_OR,
+    ALU_AND
+  } alu_type_t;
+endpackage
+
+interface instr_mem_if;
+
+  logic [rv32_pkg::XLEN-1:0] addr;
+  logic [rv32_pkg::XLEN-1:0] read_data;
+
+  modport cpu(output addr, input read_data);
+  modport cpu_dp(output addr, input read_data);
+
+  modport mem(input addr, output read_data);
+
+endinterface
+
+interface data_mem_if;
+
+  logic [rv32_pkg::XLEN-1:0] addr;
+  logic [rv32_pkg::XLEN-1:0] write_data, read_data;
+  logic we;
+
+  modport cpu(input read_data, output addr, write_data, we);
+
+  modport mem(input addr, write_data, we, output read_data);
+
+  modport cpu_ctrl(output we);
+
+  modport cpu_dp(input read_data, output addr, write_data);
+
+endinterface
+
+interface dp_ctrl_if;
+
+  logic [6:0] op;
+  logic [2:0] funct3;
+  logic funct7b5;
+  logic flag_zero;
+
+  logic pc_src;
+  logic result_src;
+  logic mem_write;
+  rv32_pkg::alu_type_t alu_ctrl;
+  logic alu_src;
+  rv32_pkg::imm_src_t imm_src;
+  logic reg_write;
+
+  modport dp(
+      output op, funct3, funct7b5, flag_zero,
+      input pc_src, result_src, mem_write, alu_ctrl, alu_src, imm_src, reg_write
+  );
+  modport ctrl(
+      input op, funct3, funct7b5, flag_zero,
+      output pc_src, result_src, mem_write, alu_ctrl, alu_src, imm_src, reg_write
+  );
+
+endinterface
+
+module cpu (
+    input logic clk,
+    rst_n,
+    data_mem_if data_mem,
+    instr_mem_if instr_mem
+);
+
+  dp_ctrl_if dp_ctrl ();
+  dp u_dp (
+      .data_mem (data_mem),
+      .instr_mem(instr_mem),
+      .dp_ctrl  (dp_ctrl)
+  );
+  ctrl u_ctrl (
+      .data_mem(data_mem),
+      .dp_ctrl (dp_ctrl)
+  );
+
+endmodule
+
+module dp (
+    // from ext
+    input logic clk,
+    input logic rst_n,
+    data_mem_if.cpu_dp data_mem,
+    instr_mem_if.cpu_dp instr_mem,
+    dp_ctrl_if.dp dp_ctrl
+);
+
+  logic [rv32_pkg::XLEN-1:0] imm_ext;
+  logic [rv32_pkg::XLEN-1:0] result;
+  logic [rv32_pkg::XLEN-1:0] alu_result;
+
+  assign result = dp_ctrl.result_src ? data_mem.read_data : alu_result;
+
+  logic [rv32_pkg::XLEN-1:0] rf_rd1, rf_rd2;
+  logic [rv32_pkg::XLEN-1:0] alu_s1, alu_s2;
+  assign alu_s1 = rf_rd1;
+  assign alu_s2 = dp_ctrl.alu_src ? imm_ext : rf_rd2;
+
+  assign dp_ctrl.op = instr_mem.read_data[6:0];
+  assign dp_ctrl.funct3 = instr_mem.read_data[14:12];
+  assign dp_ctrl.funct7b5 = instr_mem.read_data[30];
+
+  rf u_rf (
+      .clk(clk),
+      .rs1(instr_mem.read_data[19:15]),
+      .rs2(instr_mem.read_data[24:20]),
+      .rd (instr_mem.read_data[11:7]),
+      .wd (result),
+      .we (dp_ctrl.reg_write),
+      .rd1(rf_rd1),
+      .rd2(rf_rd2)
+  );
+  ext u_ext (
+      .instr  (instr_mem.read_data[31:7]),
+      .imm_src(dp_ctrl.imm_src),
+      .imm_ext(imm_ext)
+  );
+  alu u_alu (
+      .s1(alu_s1),
+      .s2(alu_s2),
+      .alu_ctrl(dp_ctrl.alu_ctrl),
+      .result(alu_result),
+      .flag_zero(dp_ctrl.flag_zero)
+  );
+
+  localparam logic [rv32_pkg::XLEN-1:0] PC_INIT = 'h8;
+
+  logic [rv32_pkg::XLEN-1:0] pc;
+  logic [rv32_pkg::XLEN-1:0] pc_next;
+  assign pc_next = dp_ctrl.pc_src ? (pc + imm_ext) : (pc + 4);
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      pc <= PC_INIT;
+    end else begin
+      pc <= pc_next;
+    end
+  end
+endmodule
+
+module ctrl (
+    data_mem_if.cpu_ctrl data_mem,
+    dp_ctrl_if.ctrl dp_ctrl
+);
+
+  logic branch;
+  logic [1:0] aluop;
+
+  always_comb begin
+    case (dp_ctrl.op)
+      7'b0000011: begin  // lw
+        dp_ctrl.reg_write = 1'b1;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_I;
+        dp_ctrl.alu_src = 1'b1;
+        dp_ctrl.mem_write = 1'b0;
+        dp_ctrl.result_src = 1'b1;
+        branch = 1'b0;
+        aluop = 2'b00;
+      end
+      7'b0100011: begin  // sw
+        dp_ctrl.reg_write = 1'b0;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_S;
+        dp_ctrl.alu_src = 1'b1;
+        dp_ctrl.mem_write = 1'b1;
+        dp_ctrl.result_src = 1'b0;  // dont care
+        branch = 1'b0;
+        aluop = 2'b00;
+      end
+      7'b0110011: begin  // R-type instruction
+        dp_ctrl.reg_write = 1'b1;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_I;  // dont care in fact.
+        dp_ctrl.alu_src = 1'b0;
+        dp_ctrl.mem_write = 1'b0;
+        dp_ctrl.result_src = 1'b0;
+        branch = 1'b0;
+        aluop = 2'b10;
+      end
+      7'b1100011: begin  // beq
+        dp_ctrl.reg_write = 1'b0;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_B;
+        dp_ctrl.alu_src = 1'b0;
+        dp_ctrl.mem_write = 1'b0;
+        dp_ctrl.result_src = 1'b0;  // dont care
+        branch = 1'b1;
+        aluop = 2'b01;
+      end
+      default: begin  // ???
+        dp_ctrl.reg_write = 1'b0;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_I;
+        dp_ctrl.alu_src = 1'b0;
+        dp_ctrl.mem_write = 1'b0;
+        dp_ctrl.result_src = 1'b0;
+        branch = 1'b0;
+        aluop = 2'b00;
+      end
+    endcase
+
+    case (aluop)
+      2'b00: dp_ctrl.alu_ctrl = rv32_pkg::ALU_ADD;
+      2'b01: dp_ctrl.alu_ctrl = rv32_pkg::ALU_SUB;
+      2'b10:
+      case (dp_ctrl.funct3)
+        3'b000:
+        dp_ctrl.alu_ctrl = {dp_ctrl.op[5],dp_ctrl.funct7b5} == 2'b11 ? rv32_pkg::ALU_SUB : rv32_pkg::ALU_ADD;
+        3'b010: dp_ctrl.alu_ctrl = rv32_pkg::ALU_SLT;
+        3'b110: dp_ctrl.alu_ctrl = rv32_pkg::ALU_OR;
+        3'b111: dp_ctrl.alu_ctrl = rv32_pkg::ALU_AND;
+        default: dp_ctrl.alu_ctrl = rv32_pkg::ALU_ADD;  // ???
+      endcase
+      default: dp_ctrl.alu_ctrl = rv32_pkg::ALU_ADD;  // ???
+    endcase
+  end
+
+endmodule
+
+module rf (
+    input logic clk,
+    input logic [4:0] rs1,
+    rs2,
+    rd,
+    input logic we,
+    input logic [rv32_pkg::XLEN-1:0] wd,
+    output logic [rv32_pkg::XLEN-1:0] rd1,
+    rd2
+);
+
+  logic [rv32_pkg::XLEN-1:0] regs[0:31];
+
+  always_ff @(posedge clk) begin
+    rd1 <= regs[rs1];
+    rd2 <= regs[rs2];
+    if (we && rd != 0) regs[rd] <= wd;
+  end
+
+endmodule
+
+module ext (
+    input logic [31:7] instr,
+    input rv32_pkg::imm_src_t imm_src,
+    output logic [rv32_pkg::XLEN-1:0] imm_ext
+);
+
+  always_comb begin
+    case (imm_src)
+      rv32_pkg::TYPE_I: imm_ext = {{20{instr[31]}}, instr[31:20]};
+      rv32_pkg::TYPE_S: imm_ext = {{20{instr[31]}}, instr[31:25], instr[11:7]};
+      rv32_pkg::TYPE_B: imm_ext = {{20{instr[31]}}, instr[7], instr[30:25], instr[11:8], 1'b0};
+      rv32_pkg::TYPE_J: imm_ext = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0};
+      default: imm_ext = 'h0cc;
+    endcase
+  end
+
+endmodule
+
+module alu (
+    input logic [rv32_pkg::XLEN-1:0] s1,
+    s2,
+    input rv32_pkg::alu_type_t alu_ctrl,
+    output logic flag_zero,
+    output logic [rv32_pkg::XLEN-1:0] result
+);
+
+  assign flag_zero = (result == '0) ? 1'b1 : 1'b0;
+
+  always_comb begin
+    case (alu_ctrl)
+      rv32_pkg::ALU_ADD: result = s1 + s2;
+      rv32_pkg::ALU_SUB: result = s1 - s2;
+      rv32_pkg::ALU_AND: result = s1 & s2;
+      rv32_pkg::ALU_OR: result = s1 | s2;
+      rv32_pkg::ALU_SLT: result = {31'b0, ($signed(s1) < $signed(s2))};
+      default: result = 'h0cc;
+    endcase
+  end
+
+endmodule

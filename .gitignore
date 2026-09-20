@@ -1,2 +1,3 @@
 *.svv
 .zed
+.DS_Store
