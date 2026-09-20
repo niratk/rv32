@@ -53,7 +53,6 @@ interface dp_ctrl_if;
 
   logic pc_src;
   logic result_src;
-  logic mem_write;
   rv32_pkg::alu_type_t alu_ctrl;
   logic alu_src;
   rv32_pkg::imm_src_t imm_src;
@@ -61,11 +60,11 @@ interface dp_ctrl_if;
 
   modport dp(
       output op, funct3, funct7b5, flag_zero,
-      input pc_src, result_src, mem_write, alu_ctrl, alu_src, imm_src, reg_write
+      input pc_src, result_src, alu_ctrl, alu_src, imm_src, reg_write
   );
   modport ctrl(
       input op, funct3, funct7b5, flag_zero,
-      output pc_src, result_src, mem_write, alu_ctrl, alu_src, imm_src, reg_write
+      output pc_src, result_src, alu_ctrl, alu_src, imm_src, reg_write
   );
 
 endinterface
@@ -166,7 +165,7 @@ module ctrl (
         dp_ctrl.reg_write = 1'b1;
         dp_ctrl.imm_src = rv32_pkg::TYPE_I;
         dp_ctrl.alu_src = 1'b1;
-        dp_ctrl.mem_write = 1'b0;
+        data_mem.we = 1'b0;
         dp_ctrl.result_src = 1'b1;
         branch = 1'b0;
         aluop = 2'b00;
@@ -175,7 +174,7 @@ module ctrl (
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_S;
         dp_ctrl.alu_src = 1'b1;
-        dp_ctrl.mem_write = 1'b1;
+        data_mem.we = 1'b1;
         dp_ctrl.result_src = 1'b0;  // dont care
         branch = 1'b0;
         aluop = 2'b00;
@@ -184,7 +183,7 @@ module ctrl (
         dp_ctrl.reg_write = 1'b1;
         dp_ctrl.imm_src = rv32_pkg::TYPE_I;  // dont care in fact.
         dp_ctrl.alu_src = 1'b0;
-        dp_ctrl.mem_write = 1'b0;
+        data_mem.we = 1'b0;
         dp_ctrl.result_src = 1'b0;
         branch = 1'b0;
         aluop = 2'b10;
@@ -193,7 +192,7 @@ module ctrl (
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_B;
         dp_ctrl.alu_src = 1'b0;
-        dp_ctrl.mem_write = 1'b0;
+        data_mem.we = 1'b0;
         dp_ctrl.result_src = 1'b0;  // dont care
         branch = 1'b1;
         aluop = 2'b01;
@@ -202,7 +201,7 @@ module ctrl (
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_I;
         dp_ctrl.alu_src = 1'b0;
-        dp_ctrl.mem_write = 1'b0;
+        data_mem.we = 1'b0;
         dp_ctrl.result_src = 1'b0;
         branch = 1'b0;
         aluop = 2'b00;
@@ -239,11 +238,12 @@ module rf (
 );
 
   logic [rv32_pkg::XLEN-1:0] regs[0:31];
+  assign rd1 = regs[rs1];
+  assign rd2 = regs[rs2];
 
   always_ff @(posedge clk) begin
-    rd1 <= regs[rs1];
-    rd2 <= regs[rs2];
     if (we && rd != 0) regs[rd] <= wd;
+    regs[0] <= '0;
   end
 
 endmodule
