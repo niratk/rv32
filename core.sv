@@ -46,14 +46,16 @@ package rv32_pkg;
     ALU_SRA,
     ALU_SRL
   } alu_type_t;
-  typedef enum logic {
+  typedef enum logic [1:0] {
     PC_PLUS4,
-    PC_TARGET
+    PC_TARGET,
+    PC_ALU
   } pc_src_t;
   typedef enum logic [1:0] {
     RESULT_ALU,
     RESULT_MEM,
-    RESULT_IMM
+    RESULT_IMM,
+    RESULT_PCPLUS4
   } result_src_t;
   typedef enum logic {
     ALU_SRC_R1,
@@ -163,6 +165,7 @@ module dp (
       rv32_pkg::RESULT_ALU: result = alu_result;
       rv32_pkg::RESULT_MEM: result = data_mem.read_data;
       rv32_pkg::RESULT_IMM: result = imm_ext;
+      rv32_pkg::RESULT_PCPLUS4: result = pc + 4;
       default: result = alu_result;
     endcase
   end
@@ -214,6 +217,7 @@ module dp (
     case (dp_ctrl.pc_src)
       rv32_pkg::PC_TARGET: pc_next = pc + imm_ext;
       rv32_pkg::PC_PLUS4:  pc_next = pc + 4;
+      rv32_pkg::PC_ALU:    pc_next = {alu_result[31:1], 1'b0};
       default:             pc_next = pc + 4;
     endcase
   end
@@ -232,8 +236,26 @@ module ctrl (
     dp_ctrl_if.ctrl dp_ctrl
 );
 
-  logic branch;
+  typedef enum logic [1:0] {
+    PC_MODE_BRANCH,
+    PC_MODE_JUMP,
+    PC_MODE_JALR,
+    PC_MODE_SEQ
+  } pc_mode_t;
+
+  pc_mode_t pc_mode;
   logic [1:0] aluop;
+
+  always_comb begin
+    case (pc_mode)
+      PC_MODE_BRANCH: dp_ctrl.pc_src = dp_ctrl.flag_zero ? rv32_pkg::PC_TARGET : rv32_pkg::PC_PLUS4;
+      PC_MODE_JALR: dp_ctrl.pc_src = rv32_pkg::PC_ALU;
+      PC_MODE_JUMP: dp_ctrl.pc_src = rv32_pkg::PC_TARGET;
+      PC_MODE_SEQ: dp_ctrl.pc_src = rv32_pkg::PC_PLUS4;
+      default: dp_ctrl.pc_src = rv32_pkg::PC_PLUS4;
+    endcase
+  end
+
 
   always_comb begin
     case (dp_ctrl.op)
@@ -244,7 +266,7 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_IMM;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_MEM;
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
         aluop = 2'b00;
       end
       rv32_pkg::OPCODE_STORE: begin  // sw
@@ -254,17 +276,17 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_IMM;
         data_mem.we = 1'b1;
         dp_ctrl.result_src = rv32_pkg::RESULT_ALU;  // dont care
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
         aluop = 2'b00;
       end
-      rv32_pkg::OPCODE_OP: begin  // R-type instruction
+      rv32_pkg::OPCODE_OP: begin
         dp_ctrl.reg_write = 1'b1;
-        dp_ctrl.imm_src = rv32_pkg::TYPE_I;  // dont care in fact.
+        dp_ctrl.imm_src = rv32_pkg::TYPE_I;
         dp_ctrl.alu_src_1 = rv32_pkg::ALU_SRC_R1;
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_R2;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_ALU;
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
         aluop = 2'b10;
       end
       rv32_pkg::OPCODE_BRANCH: begin  // beq
@@ -274,7 +296,7 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_R2;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_ALU;  // dont care
-        branch = 1'b1;
+        pc_mode = PC_MODE_BRANCH;
         aluop = 2'b01;
       end
       rv32_pkg::OPCODE_OP_IMM: begin
@@ -284,7 +306,7 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_IMM;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_ALU;
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
         aluop = 2'b10;
       end
       rv32_pkg::OPCODE_LUI: begin
@@ -294,7 +316,7 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_IMM;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_IMM;
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
         aluop = 2'b00;
       end
       rv32_pkg::OPCODE_AUIPC: begin
@@ -304,7 +326,27 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_IMM;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_ALU;
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
+        aluop = 2'b00;
+      end
+      rv32_pkg::OPCODE_JAL: begin
+        dp_ctrl.reg_write = 1'b1;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_J;
+        dp_ctrl.alu_src_1 = rv32_pkg::ALU_SRC_R1;
+        dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_R2;
+        data_mem.we = 1'b0;
+        dp_ctrl.result_src = rv32_pkg::RESULT_PCPLUS4;
+        pc_mode = PC_MODE_JUMP;
+        aluop = 2'b00;
+      end
+      rv32_pkg::OPCODE_JALR: begin
+        dp_ctrl.reg_write = 1'b1;
+        dp_ctrl.imm_src = rv32_pkg::TYPE_I;
+        dp_ctrl.alu_src_1 = rv32_pkg::ALU_SRC_R1;
+        dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_IMM;
+        data_mem.we = 1'b0;
+        dp_ctrl.result_src = rv32_pkg::RESULT_PCPLUS4;
+        pc_mode = PC_MODE_JALR;
         aluop = 2'b00;
       end
       default: begin  // ???
@@ -314,7 +356,7 @@ module ctrl (
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_R2;
         data_mem.we = 1'b0;
         dp_ctrl.result_src = rv32_pkg::RESULT_ALU;
-        branch = 1'b0;
+        pc_mode = PC_MODE_SEQ;
         aluop = 2'b00;
       end
     endcase
