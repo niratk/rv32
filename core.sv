@@ -1,6 +1,32 @@
 package rv32_pkg;
   localparam int XLEN = 32;
   localparam int INSTR_WIDTH = 32;
+
+  // RV32G (RV32I + MAFD + Zicsr + Zifencei) major opcodes.
+  // An individual instruction is selected by the opcode together with fields
+  // such as funct3, funct7, funct5, funct2, and the immediate value.
+  typedef enum logic [6:0] {
+    OPCODE_LOAD     = 7'b0000011,  // Integer load
+    OPCODE_LOAD_FP  = 7'b0000111,  // Floating-point load
+    OPCODE_MISC_MEM = 7'b0001111,  // FENCE, FENCE.I, and memory-ordering hints
+    OPCODE_OP_IMM   = 7'b0010011,  // Integer immediate operation
+    OPCODE_AUIPC    = 7'b0010111,  // Add upper immediate to PC
+    OPCODE_STORE    = 7'b0100011,  // Integer store
+    OPCODE_STORE_FP = 7'b0100111,  // Floating-point store
+    OPCODE_AMO      = 7'b0101111,  // Atomic memory operation
+    OPCODE_OP       = 7'b0110011,  // Integer register-register operation
+    OPCODE_LUI      = 7'b0110111,  // Load upper immediate
+    OPCODE_MADD     = 7'b1000011,  // Floating-point fused multiply-add
+    OPCODE_MSUB     = 7'b1000111,  // Floating-point fused multiply-subtract
+    OPCODE_NMSUB    = 7'b1001011,  // Negated fused multiply-subtract
+    OPCODE_NMADD    = 7'b1001111,  // Negated fused multiply-add
+    OPCODE_OP_FP    = 7'b1010011,  // Floating-point operation
+    OPCODE_BRANCH   = 7'b1100011,  // Conditional branch
+    OPCODE_JALR     = 7'b1100111,  // Indirect jump and link
+    OPCODE_JAL      = 7'b1101111,  // PC-relative jump and link
+    OPCODE_SYSTEM   = 7'b1110011   // Environment and CSR operation
+  } opcode_t;
+
   typedef enum logic [1:0] {
     TYPE_I,
     TYPE_S,
@@ -46,7 +72,7 @@ endinterface
 
 interface dp_ctrl_if;
 
-  logic [6:0] op;
+  rv32_pkg::opcode_t op;
   logic [2:0] funct3;
   logic funct7b5;
   logic flag_zero;
@@ -109,7 +135,7 @@ module dp (
   assign alu_s1 = rf_rd1;
   assign alu_s2 = dp_ctrl.alu_src ? imm_ext : rf_rd2;
 
-  assign dp_ctrl.op = instr_mem.read_data[6:0];
+  assign dp_ctrl.op = rv32_pkg::opcode_t'(instr_mem.read_data[6:0]);
   assign dp_ctrl.funct3 = instr_mem.read_data[14:12];
   assign dp_ctrl.funct7b5 = instr_mem.read_data[30];
 
@@ -161,7 +187,7 @@ module ctrl (
 
   always_comb begin
     case (dp_ctrl.op)
-      7'b0000011: begin  // lw
+      rv32_pkg::OPCODE_LOAD: begin  // lw
         dp_ctrl.reg_write = 1'b1;
         dp_ctrl.imm_src = rv32_pkg::TYPE_I;
         dp_ctrl.alu_src = 1'b1;
@@ -170,7 +196,7 @@ module ctrl (
         branch = 1'b0;
         aluop = 2'b00;
       end
-      7'b0100011: begin  // sw
+      rv32_pkg::OPCODE_STORE: begin  // sw
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_S;
         dp_ctrl.alu_src = 1'b1;
@@ -179,7 +205,7 @@ module ctrl (
         branch = 1'b0;
         aluop = 2'b00;
       end
-      7'b0110011: begin  // R-type instruction
+      rv32_pkg::OPCODE_OP: begin  // R-type instruction
         dp_ctrl.reg_write = 1'b1;
         dp_ctrl.imm_src = rv32_pkg::TYPE_I;  // dont care in fact.
         dp_ctrl.alu_src = 1'b0;
@@ -188,7 +214,7 @@ module ctrl (
         branch = 1'b0;
         aluop = 2'b10;
       end
-      7'b1100011: begin  // beq
+      rv32_pkg::OPCODE_BRANCH: begin  // beq
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_B;
         dp_ctrl.alu_src = 1'b0;
