@@ -100,7 +100,7 @@ interface dp_ctrl_if;
   rv32_pkg::opcode_t op;
   logic [2:0] funct3;
   logic funct7b5;
-  logic flag_zero;
+  logic branch_taken;
 
   rv32_pkg::pc_src_t pc_src;
   rv32_pkg::result_src_t result_src;
@@ -111,11 +111,11 @@ interface dp_ctrl_if;
   logic reg_write;
 
   modport dp(
-      output op, funct3, funct7b5, flag_zero,
+      output op, funct3, funct7b5, branch_taken,
       input pc_src, result_src, alu_ctrl, alu_src_1, alu_src_2, imm_src, reg_write
   );
   modport ctrl(
-      input op, funct3, funct7b5, flag_zero,
+      input op, funct3, funct7b5, branch_taken,
       output pc_src, result_src, alu_ctrl, alu_src_1, alu_src_2, imm_src, reg_write
   );
 
@@ -190,6 +190,18 @@ module dp (
   assign dp_ctrl.funct3 = instr_mem.read_data[14:12];
   assign dp_ctrl.funct7b5 = instr_mem.read_data[30];
 
+  always_comb begin
+    case (dp_ctrl.funct3)
+      3'b000:  dp_ctrl.branch_taken = (rf_rd1 == rf_rd2);
+      3'b001:  dp_ctrl.branch_taken = (rf_rd1 != rf_rd2);
+      3'b100:  dp_ctrl.branch_taken = ($signed(rf_rd1) < $signed(rf_rd2));
+      3'b101:  dp_ctrl.branch_taken = ($signed(rf_rd1) >= $signed(rf_rd2));
+      3'b110:  dp_ctrl.branch_taken = rf_rd1 < rf_rd2;
+      3'b111:  dp_ctrl.branch_taken = rf_rd1 >= rf_rd2;
+      default: dp_ctrl.branch_taken = 1'b0;
+    endcase
+  end
+
   rf u_rf (
       .clk(clk),
       .rs1(instr_mem.read_data[19:15]),
@@ -209,8 +221,7 @@ module dp (
       .s1(alu_s1),
       .s2(alu_s2),
       .alu_ctrl(dp_ctrl.alu_ctrl),
-      .result(alu_result),
-      .flag_zero(dp_ctrl.flag_zero)
+      .result(alu_result)
   );
 
   always_comb begin
@@ -248,14 +259,14 @@ module ctrl (
 
   always_comb begin
     case (pc_mode)
-      PC_MODE_BRANCH: dp_ctrl.pc_src = dp_ctrl.flag_zero ? rv32_pkg::PC_TARGET : rv32_pkg::PC_PLUS4;
+      PC_MODE_BRANCH:
+      dp_ctrl.pc_src = dp_ctrl.branch_taken ? rv32_pkg::PC_TARGET : rv32_pkg::PC_PLUS4;
       PC_MODE_JALR: dp_ctrl.pc_src = rv32_pkg::PC_ALU;
       PC_MODE_JUMP: dp_ctrl.pc_src = rv32_pkg::PC_TARGET;
       PC_MODE_SEQ: dp_ctrl.pc_src = rv32_pkg::PC_PLUS4;
       default: dp_ctrl.pc_src = rv32_pkg::PC_PLUS4;
     endcase
   end
-
 
   always_comb begin
     case (dp_ctrl.op)
@@ -289,13 +300,13 @@ module ctrl (
         pc_mode = PC_MODE_SEQ;
         aluop = 2'b10;
       end
-      rv32_pkg::OPCODE_BRANCH: begin  // beq
+      rv32_pkg::OPCODE_BRANCH: begin
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_B;
         dp_ctrl.alu_src_1 = rv32_pkg::ALU_SRC_R1;
         dp_ctrl.alu_src_2 = rv32_pkg::ALU_SRC_R2;
         data_mem.we = 1'b0;
-        dp_ctrl.result_src = rv32_pkg::RESULT_ALU;  // dont care
+        dp_ctrl.result_src = rv32_pkg::RESULT_ALU;
         pc_mode = PC_MODE_BRANCH;
         aluop = 2'b01;
       end
@@ -428,11 +439,8 @@ module alu (
     input logic [rv32_pkg::XLEN-1:0] s1,
     s2,
     input rv32_pkg::alu_type_t alu_ctrl,
-    output logic flag_zero,
     output logic [rv32_pkg::XLEN-1:0] result
 );
-
-  assign flag_zero = (result == '0) ? 1'b1 : 1'b0;
 
   always_comb begin
     case (alu_ctrl)
