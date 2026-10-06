@@ -163,7 +163,16 @@ module dp (
   always_comb begin
     case (dp_ctrl.result_src)
       rv32_pkg::RESULT_ALU: result = alu_result;
-      rv32_pkg::RESULT_MEM: result = data_mem.read_data;
+      rv32_pkg::RESULT_MEM: begin
+        case (dp_ctrl.funct3)
+          3'b000:  result = {{24{data_mem.read_data[7]}}, data_mem.read_data[7:0]};
+          3'b001:  result = {{16{data_mem.read_data[15]}}, data_mem.read_data[15:0]};
+          3'b010:  result = data_mem.read_data;
+          3'b100:  result = {24'b0, data_mem.read_data[7:0]};
+          3'b101:  result = {16'b0, data_mem.read_data[15:0]};
+          default: result = 32'b0;
+        endcase
+      end
       rv32_pkg::RESULT_IMM: result = imm_ext;
       rv32_pkg::RESULT_PCPLUS4: result = pc + 4;
       default: result = alu_result;
@@ -189,6 +198,16 @@ module dp (
   assign dp_ctrl.op = rv32_pkg::opcode_t'(instr_mem.read_data[6:0]);
   assign dp_ctrl.funct3 = instr_mem.read_data[14:12];
   assign dp_ctrl.funct7b5 = instr_mem.read_data[30];
+
+  assign data_mem.addr = alu_result;
+  always_comb begin
+    case (dp_ctrl.funct3)
+      3'b000:  data_mem.write_data = {24'b0, rf_rd2[7:0]};
+      3'b001:  data_mem.write_data = {16'b0, rf_rd2[15:0]};
+      3'b010:  data_mem.write_data = rf_rd2;
+      default: data_mem.write_data = '0;
+    endcase
+  end
 
   always_comb begin
     case (dp_ctrl.funct3)
@@ -270,7 +289,7 @@ module ctrl (
 
   always_comb begin
     case (dp_ctrl.op)
-      rv32_pkg::OPCODE_LOAD: begin  // lw
+      rv32_pkg::OPCODE_LOAD: begin
         dp_ctrl.reg_write = 1'b1;
         dp_ctrl.imm_src = rv32_pkg::TYPE_I;
         dp_ctrl.alu_src_1 = rv32_pkg::ALU_SRC_R1;
@@ -280,7 +299,7 @@ module ctrl (
         pc_mode = PC_MODE_SEQ;
         aluop = 2'b00;
       end
-      rv32_pkg::OPCODE_STORE: begin  // sw
+      rv32_pkg::OPCODE_STORE: begin
         dp_ctrl.reg_write = 1'b0;
         dp_ctrl.imm_src = rv32_pkg::TYPE_S;
         dp_ctrl.alu_src_1 = rv32_pkg::ALU_SRC_R1;
@@ -429,7 +448,7 @@ module ext (
       rv32_pkg::TYPE_B: imm_ext = {{20{instr[31]}}, instr[7], instr[30:25], instr[11:8], 1'b0};
       rv32_pkg::TYPE_J: imm_ext = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0};
       rv32_pkg::TYPE_U: imm_ext = {instr[31:12], 12'b0};
-      default: imm_ext = 'h0cc;
+      default: imm_ext = '0;
     endcase
   end
 

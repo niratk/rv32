@@ -33,10 +33,10 @@ SystemVerilog で記述した、RV32I の一部を実装対象とする CPU で�
 | `sw rs2, imm(rs1)`    | `0100011` | `010`  | -         | `Mem[rs1 + sext(imm)] = rs2`                                   |
 | `beq rs1, rs2, imm`   | `1100011` | `000`  | -         | `rs1 == rs2` なら `PC = PC + sext(imm)`                        |
 | `bne rs1, rs2, imm`   | `1100011` | `001`  | -         | `rs1 != rs2` なら `PC = PC + sext(imm)`                        |
-| `blt rs1, rs2, imm`   | `1100011` | `100`  | -         | 符号付き比較で `rs1 < rs2` なら `PC = PC + sext(imm)`           |
-| `bge rs1, rs2, imm`   | `1100011` | `101`  | -         | 符号付き比較で `rs1 >= rs2` なら `PC = PC + sext(imm)`          |
-| `bltu rs1, rs2, imm`  | `1100011` | `110`  | -         | 符号なし比較で `rs1 < rs2` なら `PC = PC + sext(imm)`           |
-| `bgeu rs1, rs2, imm`  | `1100011` | `111`  | -         | 符号なし比較で `rs1 >= rs2` なら `PC = PC + sext(imm)`          |
+| `blt rs1, rs2, imm`   | `1100011` | `100`  | -         | 符号付き比較で `rs1 < rs2` なら `PC = PC + sext(imm)`          |
+| `bge rs1, rs2, imm`   | `1100011` | `101`  | -         | 符号付き比較で `rs1 >= rs2` なら `PC = PC + sext(imm)`         |
+| `bltu rs1, rs2, imm`  | `1100011` | `110`  | -         | 符号なし比較で `rs1 < rs2` なら `PC = PC + sext(imm)`          |
+| `bgeu rs1, rs2, imm`  | `1100011` | `111`  | -         | 符号なし比較で `rs1 >= rs2` なら `PC = PC + sext(imm)`         |
 
 byte/halfword の load/store、CSR、例外、割り込み、RV32I 以外の拡張命令は対象外です。
 
@@ -57,3 +57,4 @@ byte/halfword の load/store、CSR、例外、割り込み、RV32I 以外の拡�
 - トップモジュールからデータパスへ `clk` と `rst_n` が接続されていません。
 - ALU 結果と `rs2` がデータメモリの `addr` / `write_data` に接続されていません。
 - 命令デコードは opcode と一部の funct フィールドだけで選択しているため、未対応の load/store や不正な OP/OP-IMM/BRANCH/JALR encoding が、対応命令として誤実行される可能性があります。
+- 一部ctrlとdpの責務分担が雑かもしれない
